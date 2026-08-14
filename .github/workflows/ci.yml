@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [22.19.0, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.19.0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm docs:check
+      - run: pnpm build
+      - run: pnpm pack
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.19.0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+
+  profile-install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.19.0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node -e "require('node:fs').mkdirSync('artifacts',{recursive:true})"
+      - run: pnpm pack --pack-destination artifacts
+      - uses: actions/checkout@v4
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 47f943859bef60e4160492346772ded9b24f765a
+          path: deepseek-harness
+      - working-directory: deepseek-harness
+        run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsx scripts/smoke-profile-install.ts deepseek-harness artifacts/dsh-workspace-1.0.0.tgz
+      - if: matrix.os == 'ubuntu-latest'
+        working-directory: deepseek-harness
+        run: pnpm build
+      - if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DSH_HOME="$RUNNER_TEMP/daw-runtime-home"
+          (cd deepseek-harness && pnpm dsh plugin --profile web add "$GITHUB_WORKSPACE/artifacts/dsh-workspace-1.0.0.tgz")
+          (cd deepseek-harness && node --import tsx/esm apps/cli/src/bin.ts web --port 43992) &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:43992/ >/dev/null \
+              && curl --fail --silent http://127.0.0.1:3090/api/v1/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
+  kotlin-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+      - uses: gradle/actions/setup-gradle@v4
+      - working-directory: kotlin-sdk
+        run: chmod +x gradlew && ./gradlew test --no-daemon

@@ -1,0 +1,1065 @@
+openapi: 3.1.0
+info:
+  title: DeepSeek Harness Mobile API
+  version: 1.0.0
+  description: Versioned file and chat BFF for mobile and third-party DSH clients. HTTP and HTTPS are both supported.
+servers:
+  - url: http://127.0.0.1:3090/api/v1
+    description: Default listener; the bind IP and port are configurable from the local DSH WebUI
+security:
+  - bearerAuth: []
+paths:
+  /healthz:
+    get:
+      security: []
+      operationId: health
+      responses:
+        '200':
+          description: Listener is alive without exposing host details.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, version, pluginVersion]
+                properties:
+                  ok: { type: boolean, const: true }
+                  version: { type: string, const: v1 }
+                  pluginVersion: { type: string, const: 1.0.0 }
+  /pairings/exchange:
+    post:
+      security: []
+      operationId: exchangePairing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, deviceName]
+              properties:
+                code: { type: string, minLength: 8 }
+                deviceName: { type: string, minLength: 1, maxLength: 120 }
+      responses:
+        '201':
+          description: Device token returned exactly once.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, device]
+                properties:
+                  token: { type: string }
+                  device: { $ref: '#/components/schemas/Device' }
+        '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /devices/self:
+    get:
+      operationId: getCurrentDevice
+      responses:
+        '200':
+          description: Current device grants.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        '401': { $ref: '#/components/responses/Error' }
+  /roots:
+    get:
+      operationId: listRoots
+      responses:
+        '200':
+          description: Roots granted to this device. Absolute host paths are omitted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Root' }
+        '403': { $ref: '#/components/responses/Error' }
+  /roots/{rootId}/entries:
+    parameters:
+      - $ref: '#/components/parameters/RootId'
+    get:
+      operationId: listEntries
+      parameters:
+        - $ref: '#/components/parameters/Path'
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        '200':
+          description: One lazy directory page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DirectoryPage' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, kind]
+              properties:
+                path: { $ref: '#/components/schemas/WirePath' }
+                kind: { type: string, enum: [file, directory] }
+      responses:
+        '201':
+          description: Entry created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileEntry' }
+        '409': { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: moveEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, destinationPath]
+              properties:
+                path: { $ref: '#/components/schemas/WirePath' }
+                destinationPath: { $ref: '#/components/schemas/WirePath' }
+      responses:
+        '200':
+          description: Entry moved or renamed.
+        '409': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: trashEntry
+      parameters:
+        - $ref: '#/components/parameters/RequiredPath'
+      responses:
+        '200':
+          description: Entry moved to plugin trash.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrashItem' }
+        '403': { $ref: '#/components/responses/Error' }
+  /roots/{rootId}/content:
+    parameters:
+      - $ref: '#/components/parameters/RootId'
+      - $ref: '#/components/parameters/RequiredPath'
+    get:
+      operationId: readContent
+      parameters:
+        - name: Range
+          in: header
+          schema: { type: string, examples: [bytes=0-1023] }
+      responses:
+        '200':
+          description: Complete raw file content. ETag is always returned.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/octet-stream:
+              schema: { type: string, contentEncoding: binary }
+        '206':
+          description: One byte range.
+        '416': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: writeContent
+      parameters:
+        - name: If-Match
+          in: header
+          description: Required for an existing file.
+          schema: { type: string }
+        - name: If-None-Match
+          in: header
+          description: Must be `*` when creating a file.
+          schema: { type: string, const: '*' }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, contentEncoding: binary }
+      responses:
+        '200':
+          description: Atomic replacement completed.
+          headers:
+            ETag: { schema: { type: string } }
+        '412': { $ref: '#/components/responses/Error' }
+        '428': { $ref: '#/components/responses/Error' }
+  /trash:
+    get:
+      operationId: listTrash
+      responses:
+        '200':
+          description: Trash items belonging to granted roots.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/TrashItem' }
+  /trash/{trashId}/restore:
+    post:
+      operationId: restoreTrash
+      parameters:
+        - name: trashId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Item restored without overwriting an existing path.
+        '409': { $ref: '#/components/responses/Error' }
+  /chat/workspaces:
+    get:
+      operationId: listChatWorkspaces
+      description: Lists DSH WebUI workspaces whose canonical directory is inside a root granted to the device. Server absolute paths are not returned.
+      responses:
+        '200':
+          description: Authorized DSH workspace choices.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChatWorkspace' }
+    post:
+      operationId: createChatWorkspace
+      description: Registers an existing authorized directory as a DSH WebUI workspace. The server absolute path is never accepted or returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rootId, path]
+              properties:
+                rootId: { type: string, format: uuid }
+                path: { $ref: '#/components/schemas/WirePath' }
+      responses:
+        '201':
+          description: DSH workspace created or idempotently resolved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workspace]
+                properties:
+                  workspace: { $ref: '#/components/schemas/ChatWorkspace' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /chat/workspaces/{workspaceId}:
+    parameters:
+      - name: workspaceId
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      operationId: renameChatWorkspace
+      description: Renames a DSH WebUI workspace visible to this device.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Renamed workspace.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workspace]
+                properties:
+                  workspace: { $ref: '#/components/schemas/ChatWorkspace' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteChatWorkspace
+      description: Removes only the DSH workspace registration. The directory, files, and session logs are preserved.
+      responses:
+        '200': { description: Workspace registration removed. }
+        '404': { $ref: '#/components/responses/Error' }
+  /chat/agent-presets:
+    get:
+      operationId: listAgentPresets
+      description: Lists the same Agent presets offered by DSH WebUI without exposing their composition files.
+      responses:
+        '200':
+          description: Agent preset choices.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AgentPreset' }
+  /settings/providers:
+    get:
+      operationId: listProviderSettings
+      description: Lists DSH model providers and credential status. Secret values are never returned.
+      responses:
+        '200':
+          description: Provider configuration safe for display to an authorized device.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderSettings' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createCustomProvider
+      description: Creates a fully custom llm-pi-ai provider using the protocols reported by ProviderSettings.customProvider.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomProviderCreate' }
+      responses:
+        '201':
+          description: Custom provider created; secret values are omitted from the response.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderSettings' }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /settings/models:
+    get:
+      operationId: listModelCatalog
+      responses:
+        '200':
+          description: Models currently available through DSH providers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelCatalog' }
+  /settings/providers/{providerId}:
+    parameters:
+      - name: providerId
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      operationId: updateProvider
+      description: Updates provider settings and optionally writes an API key to the DSH credential store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProviderPatch' }
+      responses:
+        '200':
+          description: Updated provider list without secret values.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderSettings' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: removeProvider
+      parameters:
+        - name: expectedRevision
+          in: query
+          schema: { type: integer, minimum: 0 }
+      responses:
+        '204': { description: Custom provider removed. }
+        '409': { $ref: '#/components/responses/Error' }
+  /settings/providers/{providerId}/discover:
+    post:
+      operationId: discoverProviderModels
+      parameters:
+        - name: providerId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                baseURL: { type: string }
+                api: { type: string }
+                apiKey: { type: string, writeOnly: true }
+      responses:
+        '200':
+          description: Models reported by the provider.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [models]
+                properties:
+                  models:
+                    type: array
+                    items: { $ref: '#/components/schemas/ProviderModel' }
+  /chat/sessions:
+    get:
+      operationId: listChatSessions
+      responses:
+        '200':
+          description: Sessions whose cwd is within a granted root.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChatSession' }
+    post:
+      operationId: createChatSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              oneOf:
+                - required: [workspaceId]
+                - required: [rootId, path]
+              properties:
+                workspaceId:
+                  type: string
+                  description: Preferred DSH WebUI workspace identity returned by listChatWorkspaces.
+                rootId: { type: string, format: uuid }
+                path: { $ref: '#/components/schemas/WirePath' }
+                sessionId: { type: string }
+                agentPreset: { type: string }
+                clientRequestId: { type: string, maxLength: 200 }
+      responses:
+        '201': { description: DSH session created or idempotently returned. }
+  /chat/sessions/{sessionId}:
+    patch:
+      operationId: renameChatSession
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1 }
+      responses:
+        '200': { description: Session title updated. }
+        '404': { $ref: '#/components/responses/Error' }
+  /chat/sessions/{sessionId}/fork:
+    post:
+      operationId: forkChatSession
+      description: Forks the session at the latest completed boundary, or at the supplied event sequence.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                atSeq: { type: integer, minimum: 0 }
+      responses:
+        '201':
+          description: Forked session created in the same DSH workspace.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessionId]
+                properties:
+                  sessionId: { type: string }
+        '404': { $ref: '#/components/responses/Error' }
+  /chat/sessions/{sessionId}/archive:
+    post:
+      operationId: archiveChatSession
+      description: Archives the session from default workspace views while preserving its log.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Session archived. }
+        '404': { $ref: '#/components/responses/Error' }
+  /chat/sessions/{sessionId}/messages:
+    parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: listMessages
+      parameters:
+        - name: beforeSeq
+          in: query
+          schema: { type: integer, minimum: 0 }
+        - name: maxMessages
+          in: query
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: DSH history events and continuation state. }
+        '404': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, minLength: 1 }
+                mode: { type: string, enum: [queue, steer], default: queue }
+                clientTimeZone: { type: string }
+                clientRequestId: { type: string, maxLength: 200 }
+      responses:
+        '202': { description: Prompt accepted by DSH. }
+        '409': { $ref: '#/components/responses/Error' }
+  /chat/sessions/{sessionId}/approvals:
+    get:
+      operationId: listPendingApprovals
+      description: Lists pending DSH approvals for an authorized session. Tool details are redacted and bounded; private DSH RPC identifiers are never exposed.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Pending approvals visible to the current device.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PendingApproval' }
+        '404': { $ref: '#/components/responses/Error' }
+  /chat/sessions/{sessionId}/approvals/{approvalId}/decision:
+    post:
+      operationId: decideApproval
+      description: Allows a pending tool request once or rejects it. Persistent approval is intentionally unsupported.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: approvalId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcome]
+              properties:
+                outcome: { type: string, enum: [allowed-once, rejected] }
+      responses:
+        '202': { description: Decision accepted by DSH. }
+        '409': { $ref: '#/components/responses/Error' }
+  /chat/sessions/{sessionId}/commands:
+    get:
+      operationId: listSessionCommands
+      description: Lists the DSH host slash commands currently available to this authorized session.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Current command directory.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/CommandDescriptor' }
+        '404': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: executeSessionCommand
+      description: Executes a listed slash command through the DSH host command registry. The line is never sent to the model as a chat message.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [line]
+              properties:
+                line: { type: string, minLength: 1, maxLength: 16384, pattern: '^/' }
+      responses:
+        '200':
+          description: Settled DSH command execution.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [execution]
+                properties:
+                  execution: { $ref: '#/components/schemas/CommandExecution' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /chat/sessions/{sessionId}/models:
+    get:
+      operationId: listSessionModels
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Current selection and models routable for this DSH session.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionModels' }
+        '404': { $ref: '#/components/responses/Error' }
+  /chat/sessions/{sessionId}/model:
+    put:
+      operationId: selectSessionModel
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModelSelection' }
+      responses:
+        '200':
+          description: Model selection accepted by DSH.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [selected]
+                properties:
+                  selected: { $ref: '#/components/schemas/ModelSelection' }
+        '409': { $ref: '#/components/responses/Error' }
+  /chat/sessions/{sessionId}/agent-preset:
+    put:
+      operationId: selectSessionAgentPreset
+      description: Changes the Agent preset only while the DSH session is blank. DSH locks the preset after the first accepted prompt.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentPreset]
+              properties:
+                agentPreset: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Agent preset recomposed and selected.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agentPreset]
+                properties:
+                  agentPreset: { type: string }
+        '409': { $ref: '#/components/responses/Error' }
+  /chat/runs/{id}/cancel:
+    post:
+      operationId: cancelRun
+      description: In v1 the run id is the owning DSH session id.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '202': { description: Cancellation accepted. }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-256-bit-token
+  parameters:
+    RootId:
+      name: rootId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Path:
+      name: path
+      in: query
+      required: false
+      schema: { $ref: '#/components/schemas/WirePath' }
+    RequiredPath:
+      name: path
+      in: query
+      required: true
+      schema: { $ref: '#/components/schemas/WirePath' }
+  responses:
+    Error:
+      description: Versioned API error.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  schemas:
+    WirePath:
+      type: string
+      description: POSIX-style relative path. Absolute paths, backslashes, empty segments, dot segments, drive letters, UNC and null bytes are rejected.
+      examples: [src/main.ts]
+    Root:
+      type: object
+      required: [id, label, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: string }
+        createdAt: { type: integer }
+    Device:
+      type: object
+      required: [id, name, scopes, rootIds]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        scopes:
+          type: array
+          items: { type: string, enum: [chat.read, chat.write, files.read, files.write, files.delete, settings.read, settings.write] }
+        rootIds:
+          type: array
+          items: { type: string }
+    FileEntry:
+      type: object
+      required: [name, path, kind, size, modifiedAt, writable]
+      properties:
+        name: { type: string }
+        path: { $ref: '#/components/schemas/WirePath' }
+        kind: { type: string, enum: [file, directory, symlink, other] }
+        size: { type: integer, minimum: 0 }
+        modifiedAt: { type: number }
+        writable: { type: boolean }
+    DirectoryPage:
+      type: object
+      required: [path, entries]
+      properties:
+        path: { $ref: '#/components/schemas/WirePath' }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/FileEntry' }
+        nextCursor: { type: string }
+    TrashItem:
+      type: object
+      required: [id, rootId, path, kind, size, createdAt, status]
+      properties:
+        id: { type: string, format: uuid }
+        rootId: { type: string, format: uuid }
+        path: { $ref: '#/components/schemas/WirePath' }
+        kind: { type: string }
+        size: { type: integer }
+        createdAt: { type: integer }
+        status: { type: string }
+    ChatSession:
+      type: object
+      required: [id, rootId, cwd, updatedAt, running, blank]
+      properties:
+        id: { type: string }
+        rootId: { type: string }
+        cwd: { $ref: '#/components/schemas/WirePath' }
+        updatedAt: { type: integer }
+        running: { type: boolean }
+        blank: { type: boolean }
+        title: { type: string }
+        workspaceId: { type: string }
+        workspaceTitle: { type: string }
+        agentPreset: { type: string }
+        pendingInteraction: { type: string, enum: [approval] }
+    PendingApproval:
+      type: object
+      required: [id, sessionId, toolName, risk, requestedAt]
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        toolName: { type: string, maxLength: 120 }
+        reason:
+          type: string
+          maxLength: 500
+          description: Redacted host reason suitable for display.
+        detail:
+          type: string
+          maxLength: 1200
+          description: Optional redacted tool or command preview.
+        risk: { type: string, enum: [standard, full-access] }
+        requestedAt: { type: integer }
+    CommandDescriptor:
+      type: object
+      required: [name, description]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9_-]*$' }
+        description: { type: string }
+        input:
+          type: object
+          required: [hint]
+          properties:
+            hint: { type: string }
+    CommandResult:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [success, error] }
+        text: { type: string }
+        sourceEventSeq: { type: integer, minimum: 0 }
+    CommandExecution:
+      type: object
+      required: [commandId, result]
+      properties:
+        commandId: { type: string }
+        result: { $ref: '#/components/schemas/CommandResult' }
+    TodoItem:
+      type: object
+      required: [content, status]
+      properties:
+        content: { type: string }
+        status: { type: string, enum: [pending, in_progress, completed] }
+    PermissionOption:
+      type: object
+      required: [value, name]
+      properties:
+        value: { type: string }
+        name: { type: string }
+        description: { type: string }
+    PermissionSelect:
+      type: object
+      required: [options, currentValue]
+      properties:
+        options:
+          type: array
+          items: { $ref: '#/components/schemas/PermissionOption' }
+        currentValue: { type: string }
+    ChatWorkspace:
+      type: object
+      required: [id, title, rootId, path, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        rootId: { type: string, format: uuid }
+        path: { $ref: '#/components/schemas/WirePath' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AgentPreset:
+      type: object
+      required: [id, name, trust, isDefault, available]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        trust: { type: string, enum: [system, user] }
+        isDefault: { type: boolean }
+        available: { type: boolean }
+    ModelSelection:
+      type: object
+      required: [provider, model]
+      properties:
+        provider: { type: string, minLength: 1 }
+        model: { type: string, minLength: 1 }
+        reasoningEffort: { type: string }
+    ModelReasoningEffort:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+    ModelReasoning:
+      type: object
+      required: [efforts]
+      properties:
+        efforts:
+          type: array
+          items: { $ref: '#/components/schemas/ModelReasoningEffort' }
+        defaultEffort: { type: string }
+    Model:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        contextWindow: { type: integer, minimum: 1 }
+        maxTokens: { type: integer, minimum: 1 }
+        reasoning: { $ref: '#/components/schemas/ModelReasoning' }
+    ModelProviderGroup:
+      type: object
+      required: [id, name, models]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        models:
+          type: array
+          items: { $ref: '#/components/schemas/Model' }
+    ModelFailure:
+      type: object
+      required: [provider, message]
+      properties:
+        provider: { type: string }
+        message: { type: string }
+    ModelCatalog:
+      type: object
+      required: [groups, failures]
+      properties:
+        groups:
+          type: array
+          items: { $ref: '#/components/schemas/ModelProviderGroup' }
+        failures:
+          type: array
+          items: { $ref: '#/components/schemas/ModelFailure' }
+    SessionModels:
+      allOf:
+        - $ref: '#/components/schemas/ModelCatalog'
+        - type: object
+          required: [current, routable]
+          properties:
+            current: { $ref: '#/components/schemas/ModelSelection' }
+            routable: { type: boolean }
+    ProviderModel:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string, minLength: 1 }
+        name: { type: string }
+        contextWindow: { type: integer, minimum: 1 }
+        maxTokens: { type: integer, minimum: 1 }
+    ProviderConfig:
+      type: object
+      required: [models]
+      properties:
+        baseURL: { type: string }
+        api: { type: string }
+        displayName: { type: string }
+        thinking: { type: string }
+        reasoningEffort: { type: string }
+        models:
+          type: array
+          items: { $ref: '#/components/schemas/ProviderModel' }
+        modelsInherited:
+          type: boolean
+          description: True when the listed models come from the live DSH catalog rather than a stored provider override.
+    CredentialState:
+      type: object
+      required: [ref, configured, writable]
+      properties:
+        ref: { type: string }
+        configured: { type: boolean }
+        source: { type: string }
+        writable: { type: boolean }
+    Provider:
+      type: object
+      required: [id, displayName, active, configurable, configured, removable, credential, config]
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        active: { type: boolean }
+        declared: { type: boolean }
+        configurable: { type: boolean }
+        configured: { type: boolean }
+        removable: { type: boolean }
+        credential: { $ref: '#/components/schemas/CredentialState' }
+        config: { $ref: '#/components/schemas/ProviderConfig' }
+    ProviderSettings:
+      type: object
+      required: [writable, revisionByNamespace, customProvider, providers]
+      properties:
+        writable: { type: boolean }
+        revisionByNamespace:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+        customProvider:
+          $ref: '#/components/schemas/CustomProviderCapability'
+        providers:
+          type: array
+          items: { $ref: '#/components/schemas/Provider' }
+    ProviderPatch:
+      type: object
+      properties:
+        displayName: { type: [string, 'null'] }
+        baseURL: { type: [string, 'null'] }
+        api: { type: [string, 'null'] }
+        apiKey: { type: [string, 'null'], writeOnly: true }
+        thinking: { type: [string, 'null'] }
+        reasoningEffort: { type: [string, 'null'] }
+        models:
+          type: array
+          items: { $ref: '#/components/schemas/ProviderModel' }
+        expectedRevision: { type: integer, minimum: 0 }
+    CustomProviderCapability:
+      type: object
+      required: [available, protocols]
+      properties:
+        available: { type: boolean }
+        protocols:
+          type: array
+          items: { type: string }
+        revision: { type: integer, minimum: 0 }
+    CustomProviderCreate:
+      type: object
+      required: [id, baseURL, api, models]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$'
+        displayName: { type: string }
+        baseURL: { type: string, minLength: 1 }
+        api: { type: string, minLength: 1 }
+        apiKey: { type: string, writeOnly: true }
+        models:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ProviderModel' }
+        expectedRevision: { type: integer, minimum: 0 }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            requestId: { type: string, format: uuid }
+            details: { type: object, additionalProperties: true }

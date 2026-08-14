@@ -1,0 +1,112 @@
+{
+  "name": "dsh-workspace",
+  "version": "1.0.0",
+  "description": "A bilingual file workspace and secure remote API for DeepSeek Harness WebUI and mobile clients.",
+  "type": "module",
+  "packageManager": "pnpm@11.19.0",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.cjs",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./openapi": "./docs/api/openapi.yaml",
+    "./asyncapi": "./docs/api/asyncapi.yaml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**",
+    "assets/**",
+    "docs/api/**",
+    "kotlin-sdk/build.gradle.kts",
+    "kotlin-sdk/settings.gradle.kts",
+    "kotlin-sdk/gradlew",
+    "kotlin-sdk/gradlew.bat",
+    "kotlin-sdk/gradle/wrapper/**",
+    "kotlin-sdk/src/**",
+    "kotlin-sdk/README.md",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
+    "build": "pnpm clean && tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "dev:test-server": "tsx scripts/test-server.ts",
+    "docs:check": "tsx scripts/check-project-docs.ts",
+    "check": "pnpm typecheck && pnpm test && pnpm docs:check && pnpm build",
+    "prepack": "pnpm check"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "vibe-coding",
+    "android",
+    "file-manager",
+    "remote-api"
+  ],
+  "license": "AGPL-3.0-only",
+  "author": "Hakunm (https://github.com/Hakunm)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hakunm/dsh-workspace.git"
+  },
+  "homepage": "https://github.com/Hakunm/dsh-workspace#readme",
+  "bugs": {
+    "url": "https://github.com/Hakunm/dsh-workspace/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.10.1",
+    "@codemirror/lang-javascript": "^6.2.4",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/language": "^6.11.3",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.38.6",
+    "@lezer/highlight": "^1.2.1",
+    "lucide-react": "^0.468.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^22.19.0",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@types/ws": "^8.5.13",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsdown": "^0.22.0",
+    "tsx": "^4.22.0",
+    "typescript": "^6.0.0",
+    "vitest": "^4.1.0",
+    "yaml": "2.8.1"
+  }
+}

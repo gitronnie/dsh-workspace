@@ -1,0 +1,16 @@
+node_modules/
+lib/
+coverage/
+artifacts/*
+!artifacts/dsh-workspace-1.0.0.tgz
+!artifacts/SHA256SUMS.txt
+playwright-report/
+test-results/
+kotlin-sdk/.gradle/
+kotlin-sdk/build/
+*.tgz
+!artifacts/dsh-workspace-1.0.0.tgz
+*.log
+.DS_Store
+Thumbs.db
+.tmp/

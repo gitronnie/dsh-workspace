@@ -1,0 +1,86 @@
+asyncapi: 3.0.0
+info:
+  title: DeepSeek Harness Mobile Events
+  version: 1.0.0
+  description: Live file and authorized DSH chat events. Reconnect clients must refresh REST state; unbounded replay is not provided.
+servers:
+  local:
+    host: 127.0.0.1:3090
+    description: Default listener; the bind IP and port are configurable from the local DSH WebUI
+    protocol: ws
+    pathname: /api/v1/events
+channels:
+  events:
+    address: /api/v1/events
+    messages:
+      workspaceEvent:
+        $ref: '#/components/messages/WorkspaceEvent'
+operations:
+  receiveEvents:
+    action: receive
+    channel:
+      $ref: '#/channels/events'
+    summary: Receive authorized file and chat events after Bearer authentication during upgrade.
+components:
+  messages:
+    WorkspaceEvent:
+      name: WorkspaceEvent
+      payload:
+        type: object
+        required: [id, type, time, data]
+        properties:
+          id: { type: string }
+          type:
+            type: string
+            examples: [file.changed, file.trashed, chat.message.delta, chat.message.committed, chat.session.status, chat.approval.requested, chat.approval.resolved, connection.ready]
+          time: { type: integer }
+          data:
+            oneOf:
+              - $ref: '#/components/schemas/ChatMessageDelta'
+              - $ref: '#/components/schemas/ChatMessageCommitted'
+              - $ref: '#/components/schemas/ChatApprovalRequested'
+              - $ref: '#/components/schemas/ChatApprovalResolved'
+              - type: object
+                additionalProperties: true
+  schemas:
+    ChatMessageDelta:
+      type: object
+      description: A stable token-level assistant update normalized from DSH assistant/chunk events.
+      required: [sessionId, eventType, turn, step, index, kind, text]
+      properties:
+        sessionId: { type: string }
+        eventType: { type: string, const: assistant/chunk }
+        seq: { type: integer }
+        turn: { type: integer }
+        step: { type: integer }
+        index: { type: integer }
+        kind: { type: string, enum: [text, reasoning] }
+        text: { type: string }
+    ChatMessageCommitted:
+      type: object
+      description: Signals that REST history contains a committed user or assistant message.
+      required: [sessionId, eventType, role]
+      properties:
+        sessionId: { type: string }
+        eventType: { type: string, enum: [user/message, assistant/message] }
+        seq: { type: integer }
+        role: { type: string, enum: [user, assistant] }
+        turn: { type: integer }
+        step: { type: integer }
+    ChatApprovalRequested:
+      type: object
+      description: Signals that clients should refresh the session pending-approval REST resource.
+      required: [sessionId, approvalId, toolName, risk]
+      properties:
+        sessionId: { type: string }
+        approvalId: { type: string }
+        toolName: { type: string }
+        risk: { type: string, enum: [standard, full-access] }
+    ChatApprovalResolved:
+      type: object
+      description: Signals that an approval was settled and clients should refresh session state.
+      required: [sessionId, approvalId]
+      properties:
+        sessionId: { type: string }
+        approvalId: { type: string }
+        outcome: { type: string, enum: [allowed-once, rejected, cancelled, unavailable] }
