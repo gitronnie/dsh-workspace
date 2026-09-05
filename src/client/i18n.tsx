@@ -97,6 +97,7 @@ const zh = {
   connect: '连接',
   settings: '设置',
   forgetToken: '忘记设备令牌',
+  connectDeviceActive: '已连接设备令牌，正在远程访问。',
   errorUnauthorized: '认证失败，请检查设备令牌。',
   errorForbidden: '当前设备没有执行此操作的权限。',
   errorRootDenied: '当前设备没有访问该根目录的权限。',
@@ -105,6 +106,7 @@ const zh = {
   errorNotFound: '请求的文件或资源不存在。',
   errorConflict: '目标已存在或当前状态发生冲突。',
   errorRateLimited: '请求过于频繁，请稍后重试。',
+  errorOperationFailed: '操作失败：',
   author: '作者 Github@Hakunm',
   version: '当前版本',
 } as const
@@ -204,6 +206,7 @@ const en: Messages = {
   connect: 'Connect',
   settings: 'Settings',
   forgetToken: 'Forget device token',
+  connectDeviceActive: 'Connected with a device token; accessing remotely.',
   errorUnauthorized: 'Authentication failed. Check the device token.',
   errorForbidden: 'This device is not allowed to perform that operation.',
   errorRootDenied: 'This device is not allowed to access that root.',
@@ -212,6 +215,7 @@ const en: Messages = {
   errorNotFound: 'The requested file or resource was not found.',
   errorConflict: 'The target already exists or its state has changed.',
   errorRateLimited: 'Too many requests. Try again shortly.',
+  errorOperationFailed: 'Operation failed: ',
   author: 'Author Github@Hakunm',
   version: 'Current version',
 }

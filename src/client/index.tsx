@@ -1,8 +1,9 @@
-import { FolderCode, X } from 'lucide-react'
+import { FolderCode, LogOut, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { WorkspaceApi } from './api.ts'
 import { getWorkspaceLocale, subscribeWorkspaceLocale, translate, useWorkspaceI18n } from './i18n.tsx'
 import { installWorkspaceStyles } from './styles.ts'
+import { clearToken, isLoopbackHostname, setToken, useWorkspaceToken } from './token.ts'
 import { AdminOverlay, WorkspaceApp } from './workspace.tsx'
 
 interface ClientContext {
@@ -15,7 +16,29 @@ interface ClientContext {
 
 const OPEN_WORKSPACE_EVENT = 'dsh-workspace:open-workspace'
 const OPEN_SETTINGS_EVENT = 'dsh-workspace:open-settings'
-const api = new WorkspaceApi('/dsh-workspace-api/api/v1', '/dsh-workspace-api/manage', undefined, true)
+
+function makeApi(token: string): WorkspaceApi {
+  return new WorkspaceApi('/dsh-workspace-api/api/v1', '/dsh-workspace-api/manage', token || undefined, token === '')
+}
+
+interface AuthState {
+  api: WorkspaceApi
+  localAdmin: boolean
+  deviceMode: boolean
+  needsToken: boolean
+}
+
+function useAuthState(): AuthState {
+  const token = useWorkspaceToken()
+  const localAdmin = token === '' && isLoopbackHostname(globalThis.location.hostname)
+  const deviceMode = !localAdmin && token !== ''
+  return {
+    api: useMemo(() => makeApi(token), [token]),
+    localAdmin,
+    deviceMode,
+    needsToken: !localAdmin && token === '',
+  }
+}
 
 export const inject = ['slots']
 
@@ -37,7 +60,21 @@ export function apply(ctx: ClientContext): void {
 }
 
 function FileConversationView(): JSX.Element {
-  return <WorkspaceApp api={api} compact onOpenSettings={openSettings} />
+  const { t } = useWorkspaceI18n()
+  const { api, localAdmin, deviceMode, needsToken } = useAuthState()
+  if (needsToken) {
+    return <div className="daw-root" style={{ padding: 16 }}>
+      <ConnectForm />
+    </div>
+  }
+  return (<>
+    {deviceMode && <div className="daw-root daw-toolbar" style={{ padding: '4px 12px' }}>
+      <span className="daw-list-meta">{t('connectDeviceActive')}</span>
+      <span className="daw-toolbar-spacer" />
+      <button className="daw-icon" title={t('forgetToken')} onClick={clearToken}><LogOut size={14} /></button>
+    </div>}
+    <WorkspaceApp api={api} compact {...(localAdmin ? { onOpenSettings: openSettings } : {})} />
+  </>)
 }
 
 function SidebarAction(props: { wide?: boolean }): JSX.Element {
@@ -50,6 +87,7 @@ function SidebarAction(props: { wide?: boolean }): JSX.Element {
 function GlobalOverlay(): JSX.Element | null {
   const [surface, setSurface] = useState<'closed' | 'workspace' | 'settings'>('closed')
   const [returnToWorkspace, setReturnToWorkspace] = useState(false)
+  const { api, localAdmin, needsToken } = useAuthState()
   useEffect(() => {
     const workspaceListener = (): void => {
       setReturnToWorkspace(false)
@@ -66,25 +104,31 @@ function GlobalOverlay(): JSX.Element | null {
       window.removeEventListener(OPEN_SETTINGS_EVENT, settingsListener)
     }
   }, [])
-  const stableApi = useMemo(() => api, [])
+  const closeAll = (): void => {
+    setReturnToWorkspace(false)
+    setSurface('closed')
+  }
   return <>
-    <WorkspaceOverlay
-      api={stableApi}
-      mounted={surface === 'workspace' || returnToWorkspace}
-      open={surface === 'workspace'}
-      onClose={() => {
-        setReturnToWorkspace(false)
-        setSurface('closed')
-      }}
-      onOpenSettings={() => {
-        setReturnToWorkspace(true)
-        setSurface('settings')
-      }}
-    />
-    <AdminOverlay api={stableApi} open={surface === 'settings'} onClose={() => {
-      setSurface(returnToWorkspace ? 'workspace' : 'closed')
-      setReturnToWorkspace(false)
-    }} />
+    {needsToken && surface !== 'closed'
+      ? <TokenOverlay onClose={closeAll} />
+      : <>
+          <WorkspaceOverlay
+            api={api}
+            mounted={surface === 'workspace' || returnToWorkspace}
+            open={surface === 'workspace'}
+            localAdmin={localAdmin}
+            onClose={closeAll}
+            onOpenSettings={() => {
+              setReturnToWorkspace(true)
+              setSurface('settings')
+            }}
+          />
+          {localAdmin && <AdminOverlay api={api} open={surface === 'settings'} onClose={() => {
+            setSurface(returnToWorkspace ? 'workspace' : 'closed')
+            setReturnToWorkspace(false)
+          }} />}
+        </>
+    }
   </>
 }
 
@@ -96,10 +140,43 @@ function openWorkspace(): void {
   window.dispatchEvent(new Event(OPEN_WORKSPACE_EVENT))
 }
 
+function TokenOverlay(props: { onClose(): void }): JSX.Element {
+  const { t } = useWorkspaceI18n()
+  return <div className="daw-root daw-overlay daw-workspace-overlay" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) props.onClose() }}>
+    <section className="daw-workspace-dialog" role="dialog" aria-modal="true" aria-label={t('connectTitle')}>
+      <header className="daw-dialog-head">
+        <FolderCode size={17} aria-hidden="true" />
+        <h2>{t('connectTitle')}</h2>
+        <span className="daw-toolbar-spacer" />
+        <button className="daw-icon" title={t('close')} onClick={props.onClose}><X size={17} /></button>
+      </header>
+      <div className="daw-workspace-dialog-body">
+        <ConnectForm />
+      </div>
+    </section>
+  </div>
+}
+
+function ConnectForm(): JSX.Element {
+  const { t } = useWorkspaceI18n()
+  const [draft, setDraft] = useState('')
+  return <form className="daw-token" onSubmit={(event) => {
+    event.preventDefault()
+    const value = draft.trim()
+    if (value === '') return
+    setToken(value)
+  }}>
+    <p className="daw-list-meta">{t('connectDescription')}</p>
+    <input className="daw-input" type="password" autoComplete="off" style={{ width: '100%' }} value={draft} onChange={event => setDraft(event.target.value)} />
+    <div className="daw-modal-actions"><button className="daw-command primary" type="submit">{t('connect')}</button></div>
+  </form>
+}
+
 function WorkspaceOverlay(props: {
   api: WorkspaceApi
   mounted: boolean
   open: boolean
+  localAdmin: boolean
   onClose(): void
   onOpenSettings(): void
 }): JSX.Element | null {
@@ -111,10 +188,11 @@ function WorkspaceOverlay(props: {
         <FolderCode size={17} aria-hidden="true" />
         <h2>{t('appName')}</h2>
         <span className="daw-toolbar-spacer" />
+        {!props.localAdmin && <button className="daw-icon" title={t('forgetToken')} onClick={clearToken}><LogOut size={17} /></button>}
         <button className="daw-icon" title={t('close')} onClick={props.onClose}><X size={17} /></button>
       </header>
       <div className="daw-workspace-dialog-body">
-        <WorkspaceApp api={props.api} onOpenSettings={props.onOpenSettings} />
+        <WorkspaceApp api={props.api} {...(props.localAdmin ? { onOpenSettings: props.onOpenSettings } : {})} />
       </div>
     </section>
   </div>

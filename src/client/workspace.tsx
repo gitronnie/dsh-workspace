@@ -159,6 +159,21 @@ export function WorkspaceApp(props: {
     if (rootId === '' || selected === undefined) return
     if (!globalThis.confirm(t('trashConfirm', { path: selected.path }))) return
     try {
+      // Pre-check: refresh the tree listing to ensure the selected path still exists
+      // so a stale entry from a previous external deletion doesn't silently 404.
+      try {
+        const page = await props.api.list(rootId, parentWire(selected.path))
+        if (!page.entries.some(e => e.path === selected.path)) {
+          const msg = t('errorNotFound')
+          globalThis.alert(msg)
+          setSelected(undefined)
+          setRefreshKey(key => key + 1)
+          setError(new Error(msg))
+          return
+        }
+      } catch {
+        // list failure is non-fatal; let trash throw its own error
+      }
       await props.api.trash(rootId, selected.path)
       setSelected(undefined)
       setOpenFile(undefined)
@@ -166,6 +181,7 @@ export function WorkspaceApp(props: {
       setStatus({ key: 'movedTrash' })
     } catch (cause) {
       setError(cause)
+      globalThis.alert(t('errorOperationFailed') + '\n' + messageOf(cause, t))
     }
   }, [props.api, rootId, selected, t])
 
